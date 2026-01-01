@@ -1,1 +1,251 @@
+name: Build Inferno USB Creator
 
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Windows Executable
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup MSVC
+      uses: microsoft/setup-msbuild@v2
+      
+    - name: Setup Visual Studio Environment
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        
+    - name: Create build directory
+      run: mkdir build
+      
+    - name: Compile Inferno
+      run: |
+        cl.exe /EHsc /O2 /MT /W4 ^
+          /D "UNICODE" /D "_UNICODE" /D "WIN32" /D "_WINDOWS" ^
+          /I "%WindowsSdkDir%Include\%WindowsSdkVersion%\um" ^
+          /I "%WindowsSdkDir%Include\%WindowsSdkVersion%\shared" ^
+          inferno.cpp ^
+          /Fe:build\Inferno.exe ^
+          /link ^
+          /SUBSYSTEM:WINDOWS ^
+          /MACHINE:X64 ^
+          comctl32.lib setupapi.lib shell32.lib user32.lib gdi32.lib advapi32.lib kernel32.lib
+      shell: cmd
+      
+    - name: Verify build
+      run: |
+        if (Test-Path "build\Inferno.exe") {
+          Write-Host "✅ Build successful!"
+          Get-Item "build\Inferno.exe" | Select-Object Name, Length, LastWriteTime
+        } else {
+          Write-Host "❌ Build failed - executable not found"
+          exit 1
+        }
+      shell: powershell
+      
+    - name: Create portable package
+      run: |
+        New-Item -ItemType Directory -Force -Path "build\Inferno-Portable"
+        Copy-Item "build\Inferno.exe" -Destination "build\Inferno-Portable\"
+        
+        # Create README
+        @"
+        Inferno USB Creator - Portable Edition
+        =====================================
+        
+        Version: 2.0.0
+        Developer: Ahmed Nour Ahmed - Qena, Egypt
+        
+        REQUIREMENTS:
+        - Windows 10/11 (64-bit)
+        - Administrator privileges
+        
+        FEATURES:
+        - Advanced bootable USB creation
+        - Multiple partition schemes (MBR/GPT)
+        - Multiple file systems (FAT32/NTFS/exFAT/ext4)
+        - UEFI and Legacy BIOS support
+        - Write verification
+        - Hash calculation (MD5/SHA1/SHA256)
+        - Bad blocks checking
+        - Persistence support
+        - Multi-boot configuration
+        - Detailed logging
+        
+        USAGE:
+        1. Right-click Inferno.exe
+        2. Select "Run as administrator"
+        3. Select your USB drive
+        4. Choose your ISO/IMG file
+        5. Configure options as needed
+        6. Click START
+        
+        WARNING:
+        This tool will ERASE all data on the selected drive.
+        Make sure to backup important data before proceeding.
+        
+        SUPPORT:
+        For issues or feature requests, please visit the project repository.
+        "@ | Out-File -FilePath "build\Inferno-Portable\README.txt" -Encoding UTF8
+        
+        # Create LICENSE
+        @"
+        MIT License
+        
+        Copyright (c) 2024 Ahmed Nour Ahmed
+        
+        Permission is hereby granted, free of charge, to any person obtaining a copy
+        of this software and associated documentation files (the "Software"), to deal
+        in the Software without restriction, including without limitation the rights
+        to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+        copies of the Software, and to permit persons to whom the Software is
+        furnished to do so, subject to the following conditions:
+        
+        The above copyright notice and this permission notice shall be included in all
+        copies or substantial portions of the Software.
+        
+        THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+        IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+        FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+        AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+        LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+        OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+        SOFTWARE.
+        "@ | Out-File -FilePath "build\Inferno-Portable\LICENSE.txt" -Encoding UTF8
+        
+        # Compress to ZIP
+        Compress-Archive -Path "build\Inferno-Portable\*" -DestinationPath "build\Inferno-Portable-v2.0.0.zip" -Force
+        
+        Write-Host "✅ Portable package created successfully!"
+      shell: powershell
+      
+    - name: Calculate checksums
+      run: |
+        $exe = Get-FileHash "build\Inferno.exe" -Algorithm SHA256
+        $zip = Get-FileHash "build\Inferno-Portable-v2.0.0.zip" -Algorithm SHA256
+        
+        @"
+        Inferno USB Creator - Build Checksums
+        ====================================
+        
+        SHA256 Hashes:
+        
+        Inferno.exe:
+        $($exe.Hash)
+        
+        Inferno-Portable-v2.0.0.zip:
+        $($zip.Hash)
+        
+        Generated: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+        "@ | Out-File -FilePath "build\CHECKSUMS.txt" -Encoding UTF8
+        
+        Get-Content "build\CHECKSUMS.txt"
+      shell: powershell
+      
+    - name: Upload executable
+      uses: actions/upload-artifact@v4
+      with:
+        name: Inferno-Executable
+        path: build/Inferno.exe
+        retention-days: 90
+        
+    - name: Upload portable package
+      uses: actions/upload-artifact@v4
+      with:
+        name: Inferno-Portable-Package
+        path: build/Inferno-Portable-v2.0.0.zip
+        retention-days: 90
+        
+    - name: Upload checksums
+      uses: actions/upload-artifact@v4
+      with:
+        name: Build-Checksums
+        path: build/CHECKSUMS.txt
+        retention-days: 90
+        
+    - name: Create Release (on tag)
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          build/Inferno.exe
+          build/Inferno-Portable-v2.0.0.zip
+          build/CHECKSUMS.txt
+        body: |
+          ## Inferno USB Creator ${{ github.ref_name }}
+          
+          Advanced bootable USB creation tool for Windows
+          
+          **Developer:** Ahmed Nour Ahmed - Qena, Egypt
+          
+          ### Features
+          - ✅ Multiple partition schemes (MBR/GPT)
+          - ✅ Multiple file systems (FAT32/NTFS/exFAT/ext4)
+          - ✅ UEFI and Legacy BIOS support
+          - ✅ Write verification with hash checking
+          - ✅ Bad blocks detection
+          - ✅ Persistence support for Live USB
+          - ✅ Multi-boot configuration
+          - ✅ Advanced compression options
+          - ✅ Detailed operation logging
+          - ✅ Real-time speed and progress tracking
+          
+          ### Installation
+          1. Download `Inferno-Portable-v2.0.0.zip`
+          2. Extract to any location
+          3. Run as administrator
+          
+          ### Requirements
+          - Windows 10/11 (64-bit)
+          - Administrator privileges
+          
+          ### Checksums
+          See `CHECKSUMS.txt` for SHA256 verification hashes
+          
+          ---
+          
+          **⚠️ WARNING:** This tool will erase all data on the selected drive. Always backup important data before use.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+  test:
+    name: Basic Tests
+    needs: build
+    runs-on: windows-latest
+    
+    steps:
+    - name: Download artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: Inferno-Executable
+        path: test/
+        
+    - name: Verify executable exists
+      run: |
+        if (Test-Path "test\Inferno.exe") {
+          Write-Host "✅ Executable found"
+          $fileInfo = Get-Item "test\Inferno.exe"
+          Write-Host "Size: $($fileInfo.Length) bytes"
+          Write-Host "Created: $($fileInfo.CreationTime)"
+        } else {
+          Write-Host "❌ Executable not found"
+          exit 1
+        }
+      shell: powershell
+      
+    - name: Check file signature
+      run: |
+        $file = Get-AuthenticodeSignature "test\Inferno.exe"
+        Write-Host "Status: $($file.Status)"
+        Write-Host "Status Message: $($file.StatusMessage)"
+      shell: powershell
+      continue-on-error: true
